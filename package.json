@@ -1,0 +1,12 @@
+{
+  "name": "hushchats-server",
+  "version": "2.0.0",
+  "description": "Hushchats backend: WebSocket relay, presence, offline message queue and encrypted media storage. Zero dependencies.",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/server.test.js"
+  },
+  "engines": { "node": ">=18" }
+}
