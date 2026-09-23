@@ -2413,10 +2413,36 @@ function tuneOpus(sdp) {
   }
   return sdp.replace(rtp[0], rtp[0] + '\r\na=fmtp:' + pt + ' useinbandfec=1;stereo=0;maxaveragebitrate=32000;minptime=10');
 }
+/* Enforced directly on the sender, since the fmtp bitrate in the SDP is only a hint some
+   browsers ignore for the encoder they actually run. This is the reliable way to raise it. */
+function boostAudioSender(pc) {
+  try {
+    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio'); if (!sender) return;
+    const params = sender.getParameters(); if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = 32000; params.encodings[0].priority = 'high';
+    sender.setParameters(params).catch(() => {});
+  } catch {}
+}
+/* A network blip drops ICE into "disconnected" — browsers sometimes recover on their own by
+   re-pairing existing candidates, but often just sit there with audio gone until the call times
+   out and fails. Re-offering with iceRestart forces a fresh candidate exchange instead of waiting
+   on a connection that may never come back by itself. Only the original caller (offerer) does this,
+   matching who owns the offer/answer roles in this app's manual (non-perfect) negotiation. */
+async function restartIce(c) {
+  try {
+    if (!c.pc || c.dir !== 'out') return;
+    const offer = await c.pc.createOffer({ iceRestart: true }); offer.sdp = tuneOpus(offer.sdp);
+    await c.pc.setLocalDescription(offer); callSend(c, { k: 'call-offer', callId: c.id, sdp: c.pc.localDescription.sdp });
+  } catch (err) { console.warn('ice restart', err); }
+}
 function makePc(c) {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceTransportPolicy: ICE_RELAY_ONLY ? 'relay' : 'all' }); c.pc = pc;
   pc.onicecandidate = ev => { if (ev.candidate) callSend(c, { k: 'call-ice', callId: c.id, cand: ev.candidate.toJSON() }); };
   pc.ontrack = ev => {
+    /* Widening the jitter buffer trades a little latency for a lot of smoothness on shaky
+       connections — this is what actually removes the stutter/garble you hear on weak wifi
+       or mobile data, separate from packet loss (which the Opus FEC above handles). */
+    try { if (ev.receiver && 'playoutDelayHint' in ev.receiver) ev.receiver.playoutDelayHint = 0.1; } catch {}
     let st = ev.streams && ev.streams[0]; if (!st) { c.rs = c.rs || new MediaStream(); c.rs.addTrack(ev.track); st = c.rs; }
     if (c.remote === st) { updateCallView(); return; }
     c.remote = st;
@@ -2424,11 +2450,15 @@ function makePc(c) {
   };
   pc.addEventListener('iceconnectionstatechange', () => {
     if (S.call !== c) return; const st = pc.iceConnectionState;
-    if (st === 'disconnected') setStatus(c, 'Reconnecting…');
+    if (st === 'disconnected') {
+      setStatus(c, 'Reconnecting…'); clearTimeout(c.timers.icerestart);
+      c.timers.icerestart = setTimeout(() => { if (S.call === c && pc.iceConnectionState === 'disconnected') restartIce(c); }, 3000);
+    }
     else if (st === 'failed') { toast('Call connection lost', 'error'); endCall('failed'); }
-    else if (st === 'connected' || st === 'completed') setStatus(c);
+    else if (st === 'connected' || st === 'completed') { clearTimeout(c.timers.icerestart); setStatus(c); }
   });
   c.local.getTracks().forEach(t => pc.addTrack(t, c.local));
+  boostAudioSender(pc);
   return pc;
 }
 async function drainIce(c) { while (c.pendIce.length && c.pc) { try { await c.pc.addIceCandidate(c.pendIce.shift()); } catch {} } }
@@ -2455,7 +2485,7 @@ async function onCallSignal(from, devId, hd) {
     try { const pc = makePc(c); const offer = await pc.createOffer(); offer.sdp = tuneOpus(offer.sdp); await pc.setLocalDescription(offer); callSend(c, { k: 'call-offer', callId: c.id, sdp: pc.localDescription.sdp }); }
     catch (err) { console.warn('offer', err); finishCall(c, 'failed'); }
   }
-  else if (k === 'call-offer' && c.dir === 'in' && c.state === 'connecting' && typeof hd.sdp === 'string' && hd.sdp.length < 30000) {
+  else if (k === 'call-offer' && c.dir === 'in' && (c.state === 'connecting' || c.state === 'active') && typeof hd.sdp === 'string' && hd.sdp.length < 30000) {
     try {
       const pc = c.pc || makePc(c);
       await pc.setRemoteDescription({ type: 'offer', sdp: hd.sdp }); await drainIce(c);
