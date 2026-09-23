@@ -2391,6 +2391,28 @@ async function startCall(peer, video) {
   showCallUI();
   c.timers.ring = setTimeout(() => { if (S.call === c && c.state === 'calling') { callSend(c, { k: 'call-end', callId: c.id, reason: 'timeout' }); finishCall(c, 'noanswer'); } }, 45000);
 }
+/* Opus tuning: browsers default to a fairly low, VBR-only bitrate and no forward-error-correction.
+   On any network with even mild packet loss (weak wifi, mobile data, congested TURN relay) that shows
+   up as garbled/robotic voice, because Opus's loss-concealment has to guess at the missing audio.
+   Turning on in-band FEC lets the decoder recover lost packets from redundancy in later ones, and
+   raising the bitrate/floor gives it more headroom before it starts sounding compressed. */
+function tuneOpus(sdp) {
+  const rtp = /a=rtpmap:(\d+) opus\/48000/i.exec(sdp || '');
+  if (!rtp) return sdp;
+  const pt = rtp[1];
+  const fmtpRe = new RegExp('a=fmtp:' + pt + ' ([^\r\n]*)');
+  const fm = fmtpRe.exec(sdp);
+  const set = (params, k, v) => new RegExp('(^|;)' + k + '=').test(params) ? params.replace(new RegExp(k + '=[^;]*'), k + '=' + v) : params + ';' + k + '=' + v;
+  if (fm) {
+    let params = fm[1];
+    params = set(params, 'useinbandfec', '1');
+    params = set(params, 'stereo', '0');
+    params = set(params, 'maxaveragebitrate', '32000');
+    params = set(params, 'minptime', '10');
+    return sdp.replace(fmtpRe, 'a=fmtp:' + pt + ' ' + params);
+  }
+  return sdp.replace(rtp[0], rtp[0] + '\r\na=fmtp:' + pt + ' useinbandfec=1;stereo=0;maxaveragebitrate=32000;minptime=10');
+}
 function makePc(c) {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceTransportPolicy: ICE_RELAY_ONLY ? 'relay' : 'all' }); c.pc = pc;
   pc.onicecandidate = ev => { if (ev.candidate) callSend(c, { k: 'call-ice', callId: c.id, cand: ev.candidate.toJSON() }); };
@@ -2430,14 +2452,14 @@ async function onCallSignal(from, devId, hd) {
     clearTimeout(c.timers.ring); c.state = 'connecting'; updateCallUI(); c.dev = devId;
     [...(c.targets || [])].filter(d => d !== devId).forEach(d => sendSig(c.peer, { k: 'call-end', callId: c.id, reason: 'answered-elsewhere' }, d).catch(() => {}));
     c.timers.conn = setTimeout(() => { if (S.call === c && c.state !== 'active') endCall('failed'); }, 20000);
-    try { const pc = makePc(c); const offer = await pc.createOffer(); await pc.setLocalDescription(offer); callSend(c, { k: 'call-offer', callId: c.id, sdp: pc.localDescription.sdp }); }
+    try { const pc = makePc(c); const offer = await pc.createOffer(); offer.sdp = tuneOpus(offer.sdp); await pc.setLocalDescription(offer); callSend(c, { k: 'call-offer', callId: c.id, sdp: pc.localDescription.sdp }); }
     catch (err) { console.warn('offer', err); finishCall(c, 'failed'); }
   }
   else if (k === 'call-offer' && c.dir === 'in' && c.state === 'connecting' && typeof hd.sdp === 'string' && hd.sdp.length < 30000) {
     try {
       const pc = c.pc || makePc(c);
       await pc.setRemoteDescription({ type: 'offer', sdp: hd.sdp }); await drainIce(c);
-      const ans = await pc.createAnswer(); await pc.setLocalDescription(ans);
+      const ans = await pc.createAnswer(); ans.sdp = tuneOpus(ans.sdp); await pc.setLocalDescription(ans);
       callSend(c, { k: 'call-answer', callId: c.id, sdp: pc.localDescription.sdp });
       if (c.remote && c.state !== 'active') onCallActive(c);
     } catch (err) { console.warn('answer', err); finishCall(c, 'failed'); }
