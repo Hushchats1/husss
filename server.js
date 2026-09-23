@@ -407,7 +407,7 @@ function authToken(req) { const t = tokens.get(String(req.headers['x-token'] || 
 
 const server = http.createServer((req, res) => {
   let url; try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400); return res.end(); }
-  const p = decodeURIComponent(url.pathname);
+  let p; try { p = decodeURIComponent(url.pathname); } catch { res.writeHead(400); return res.end(); }
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (p.startsWith('/api/')) cors(res);
   if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); return res.end(); }
@@ -496,6 +496,11 @@ setInterval(() => {
 
 function shutdown() { log('shutting down'); flushSync(); process.exit(0); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
+/* Last line of defense: this server holds every user's live WebSocket in one process, so any single
+   uncaught error — a bad request, an edge case nobody hit in testing — must never be allowed to kill
+   the process and disconnect everyone at once. Log it and keep running instead of crash-looping. */
+process.on('uncaughtException', e => log('uncaughtException', e && e.stack || e));
+process.on('unhandledRejection', e => log('unhandledRejection', e && e.stack || e));
 
 if (require.main === module) {
   server.listen(PORT, '0.0.0.0', () => log(`Hushchats server on :${PORT}  data=${DATA_DIR}  users=${Object.keys(users).length}`));
