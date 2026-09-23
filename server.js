@@ -55,7 +55,12 @@ const PING_MS = 8000;                           // was 20000: a dead phone socke
 const RESERVED = new Set(['admin', 'root', 'system', 'support', 'hushchats', 'help', 'null', 'undefined', 'server']);
 
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
-fs.mkdirSync(MEDIA_DIR, { recursive: true });
+/* If the Railway volume isn't mounted where DATA_DIR expects, or the path isn't writable, this used
+   to throw at startup and kill the process before it ever opened a port — Railway then restarts it,
+   it fails the same way immediately, and it never actually serves a single request: a boot crash-loop
+   that looks identical to a live one from the outside (constant connect/disconnect). Logging and
+   continuing means chat/calls/presence still work even if media storage alone is broken. */
+try { fs.mkdirSync(MEDIA_DIR, { recursive: true }); } catch (e) { log('FATAL: cannot create media dir at', DATA_DIR, '-', e.message); }
 
 /* ------------------------------ helpers ----------------------------- */
 const HANDLE_RE = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
@@ -463,19 +468,23 @@ const server = http.createServer((req, res) => {
 });
 
 server.on('upgrade', (req, socket) => {
-  if (!/^\/ws\/?(\?.*)?$/.test(req.url) || String(req.headers.upgrade || '').toLowerCase() !== 'websocket' || !req.headers['sec-websocket-key']) { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
-  const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + WS_GUID).digest('base64');
-  socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
-  onConnect(socket);
+  try {
+    if (!/^\/ws\/?(\?.*)?$/.test(req.url) || String(req.headers.upgrade || '').toLowerCase() !== 'websocket' || !req.headers['sec-websocket-key']) { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
+    const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + WS_GUID).digest('base64');
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
+    onConnect(socket);
+  } catch (e) { log('upgrade error', e.message); try { socket.destroy(); } catch {} }
 });
 
 /* ------------------------------ housekeeping ------------------------ */
 setInterval(() => {
   const t = now();
   conns.forEach(c => {
-    if (!c.ws || c.ws.closed) return;
-    if (t - c.ws.lastRx > PING_MS * 2.5) return c.ws.kill(1001);
-    c.ws.ping(); pushTo(c, { op: 'hb', t });
+    try {
+      if (!c.ws || c.ws.closed) return;
+      if (t - c.ws.lastRx > PING_MS * 2.5) return c.ws.kill(1001);
+      c.ws.ping(); pushTo(c, { op: 'hb', t });
+    } catch (e) { log('heartbeat error', e.message); }
   });
 }, PING_MS).unref();
 setInterval(() => {
