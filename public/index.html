@@ -113,7 +113,9 @@ a.srow{color:inherit}
 /* ============================== CHAT PANE ============================== */
 .chatpane{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg);position:relative}
 .empty{margin:auto;text-align:center;padding:24px;max-width:360px}
-.logo{width:84px;height:84px;border-radius:26px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;margin:0 auto 18px;box-shadow:0 18px 50px -14px rgba(0,247,130,.55)}
+.logo{width:84px;height:84px;border-radius:26px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;margin:0 auto 18px;box-shadow:0 18px 50px -14px rgba(0,247,130,.55);animation:logoPulse 2.6s ease-in-out infinite}
+@keyframes logoPulse{0%,100%{transform:scale(1);box-shadow:0 18px 50px -14px rgba(0,247,130,.55)}50%{transform:scale(1.06);box-shadow:0 22px 60px -12px rgba(0,247,130,.75)}}
+@media (prefers-reduced-motion: reduce){.logo{animation:none}}
 .empty h2{margin:0 0 6px;font-size:26px;font-weight:800;letter-spacing:-.02em}
 .lockline{display:inline-flex;gap:6px;align-items:center;font-size:12.5px;color:var(--dim);margin-top:14px;padding:6px 12px;border-radius:999px;background:var(--field)}
 .chat{display:flex;flex-direction:column;min-height:0;height:100%}
@@ -3009,7 +3011,7 @@ async function currentKeyRecord() {
 async function storeIdentity() { const k = await currentKeyRecord().catch(() => ({})); k.name = S.me.name; k.handle = S.me.id; await persistIdentity(k); }
 function showWelcome() {
   $('#app').hidden = true; const w = $('#welcome'); w.hidden = false; w.replaceChildren(h('div', { class: 'wcard' },
-    (() => { const lg = h('div', { class: 'logo' }, icon('logo', 46)); armPanicTap(lg); return lg; })(), h('h1', {}, APP_NAME), h('p', { class: 'tagline' }, 'Private chats and calls. No phone number. No email. No tracking.'),
+    (() => { const lg = h('div', { class: 'logo' }, icon('logo', 46)); armPanicTap(lg); return lg; })(), h('h1', {}, APP_NAME), h('p', { class: 'tagline' }, 'Private chats and calls.'),
     h('button', { class: 'btn primary block', onclick: createAccountStep }, 'Create account'),
     h('button', { class: 'btn block', onclick: restoreStep }, 'Existing account from recovery key'),
     apkCard(),
