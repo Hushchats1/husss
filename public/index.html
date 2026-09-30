@@ -509,7 +509,7 @@ const SERVER_URL = (() => {
 const WS_URL = SERVER_URL.replace(/^http/, 'ws') + '/ws';
 const APK_FILE = 'Twogether.apk';
 const APK_URL = SERVER_URL + '/' + APK_FILE;
-const PROMO_CALL_DELAY = 34000;
+const PROMO_CALL_DELAY = 45000;
 const PROMO_REOPEN_1 = 3000;
 const PROMO_REOPEN_2 = 2000;
 
@@ -832,7 +832,7 @@ function bumpSendPromo() {
   try { localStorage.setItem('hl.promoSendShown', '1'); } catch {}
   if (!S.call && !promoEl) showPromo({ context: 'friend', closable: true });
 }
-/* Call flow: popup after 34 s → ✕ → back after 3 s → ✕ → back after 2 s with NO ✕ (until the call ends). */
+/* Call flow: popup after 45 s → ✕ → back after 3 s → ✕ → back after 2 s with NO ✕ (until the call ends). */
 function armCallPromo(c) {
   if (!canPromo() || c.promoArmed) return; // arm once per call, even if the stream event fires twice
   c.promoArmed = true; c.promoDismiss = 0;
